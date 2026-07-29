@@ -1,0 +1,26 @@
+[project]
+name = "mojo-netcdf4"
+version = "0.1.0"
+description = "Mojo-accelerated numeric transforms for netCDF variable I/O"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lee Penkman", email = "leepenkman@gmail.com" }]
+keywords = ["mojo", "netcdf", "netcdf4", "scientific-computing"]
+dependencies = ["numpy", "netCDF4"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/lee101/mojo-netcdf4"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
