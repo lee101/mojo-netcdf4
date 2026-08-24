@@ -1,11 +1,15 @@
 """Numeric transforms around netCDF variable I/O."""
 
+from std.algorithm.functional import parallelize
 from std.math import round
 from std.sys.info import simd_width_of
 
 comptime BPtr = UnsafePointer[UInt8, AnyOrigin[mut=True]]
 comptime DPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
 comptime W = simd_width_of[DType.float64]()
+comptime PARALLEL_THRESHOLD = 1048576
+comptime GRAIN_SIZE = 262144
+comptime MAX_WORKERS = 16
 
 
 @always_inline
@@ -177,7 +181,19 @@ def decode_values(
     scale: Float64,
     offset: Float64,
 ):
-    decode_range(src, dst, 0, n, kind, scale, offset)
+    if n < PARALLEL_THRESHOLD:
+        decode_range(src, dst, 0, n, kind, scale, offset)
+        return
+    var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
+
+    @parameter
+    def work(chunk: Int):
+        var start = chunk * GRAIN_SIZE
+        decode_range(
+            src, dst, start, min(start + GRAIN_SIZE, n), kind, scale, offset
+        )
+
+    parallelize[work](chunks, min(chunks, MAX_WORKERS))
 
 
 @always_inline
@@ -401,10 +417,63 @@ def mask_values(
     valid_max: Float64,
     flags: Int,
 ):
-    mask_range(
-        src, mask, 0, n, kind, fill, missing,
-        valid_min, valid_max, flags,
-    )
+    if n < PARALLEL_THRESHOLD:
+        mask_range(
+            src, mask, 0, n, kind, fill, missing,
+            valid_min, valid_max, flags,
+        )
+        return
+    var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
+
+    @parameter
+    def work(chunk: Int):
+        var start = chunk * GRAIN_SIZE
+        mask_range(
+            src, mask, start, min(start + GRAIN_SIZE, n), kind, fill,
+            missing, valid_min, valid_max, flags,
+        )
+
+    parallelize[work](chunks, min(chunks, MAX_WORKERS))
+
+
+def unpack_values(
+    src: BPtr,
+    dst: DPtr,
+    raw: BPtr,
+    mask: BPtr,
+    n: Int,
+    kind: Int,
+    scale: Float64,
+    offset: Float64,
+    fill: Float64,
+    missing: Float64,
+    valid_min: Float64,
+    valid_max: Float64,
+    flags: Int,
+):
+    if flags == 0:
+        decode_values(src, dst, n, kind, scale, offset)
+        return
+    if n < PARALLEL_THRESHOLD:
+        decode_range(src, dst, 0, n, kind, scale, offset)
+        mask_range(
+            raw, mask, 0, n, kind, fill, missing,
+            valid_min, valid_max, flags,
+        )
+        return
+    var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
+
+    @parameter
+    def work(chunk: Int):
+        var start = chunk * GRAIN_SIZE
+        var end = min(start + GRAIN_SIZE, n)
+        decode_range(src, dst, start, end, kind, scale, offset)
+        mask_range(
+            raw, mask, start, end, kind, fill, missing,
+            valid_min, valid_max, flags,
+        )
+
+    parallelize[work](chunks, min(chunks, MAX_WORKERS))
 
 
 @export("mnc_unpack_f64")
@@ -431,19 +500,24 @@ def mnc_unpack_f64(
         return -1
     var src = BPtr(unsafe_from_address=src_addr)
     var dst = DPtr(unsafe_from_address=dst_addr)
-    decode_values(src, dst, n, kind, scale, offset)
     if flags != 0 and raw_addr != 0 and mask_addr != 0:
-        mask_values(
+        unpack_values(
+            src,
+            dst,
             BPtr(unsafe_from_address=raw_addr),
             BPtr(unsafe_from_address=mask_addr),
             n,
             kind,
+            scale,
+            offset,
             fill,
             missing,
             valid_min,
             valid_max,
             flags,
         )
+    else:
+        decode_values(src, dst, n, kind, scale, offset)
     return 0
 
 
@@ -687,6 +761,28 @@ def quantize_range(
         i += 1
 
 
+def quantize_values(
+    src: DPtr,
+    dst: DPtr,
+    n: Int,
+    multiplier: Float64,
+    inverse: Float64,
+):
+    if n < PARALLEL_THRESHOLD:
+        quantize_range(src, dst, 0, n, multiplier, inverse)
+        return
+    var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
+
+    @parameter
+    def work(chunk: Int):
+        var start = chunk * GRAIN_SIZE
+        quantize_range(
+            src, dst, start, min(start + GRAIN_SIZE, n), multiplier, inverse
+        )
+
+    parallelize[work](chunks, min(chunks, MAX_WORKERS))
+
+
 @export("mnc_quantize_f64")
 def mnc_quantize_f64(
     src_addr: Int, dst_addr: Int, n: Int, multiplier: Float64
@@ -696,5 +792,5 @@ def mnc_quantize_f64(
     var src = DPtr(unsafe_from_address=src_addr)
     var dst = DPtr(unsafe_from_address=dst_addr)
     var inverse = 1.0 / multiplier
-    quantize_range(src, dst, 0, n, multiplier, inverse)
+    quantize_values(src, dst, n, multiplier, inverse)
     return 0

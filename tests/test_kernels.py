@@ -75,6 +75,10 @@ def test_quantize_kernel_matches_netcdf_formula():
 def test_parallel_threshold_paths():
     n = _kernels.PARALLEL_THRESHOLD + 3
     raw = np.arange(n, dtype=np.int32)
+    decoded, no_mask = _kernels.unpack(raw, 0.5, 10.0)
+    assert no_mask is None
+    assert np.array_equal(decoded, raw.astype(np.float64) * 0.5 + 10.0)
+
     unpacked, mask = _kernels.unpack(
         raw,
         0.5,
@@ -85,6 +89,10 @@ def test_parallel_threshold_paths():
     assert np.array_equal(unpacked, raw.astype(np.float64) * 0.5 + 10.0)
     assert np.count_nonzero(mask) == 2
     assert mask[17] and mask[-1]
+    direct_mask = _kernels.make_mask(
+        raw, fill=np.int32(17), valid_max=np.int32(n - 2)
+    )
+    assert np.array_equal(direct_mask, mask)
 
     packed = _kernels.pack(unpacked, "i4", 0.5, 10.0, np.iinfo("i4").max)
     assert np.array_equal(packed, raw)
@@ -95,6 +103,23 @@ def test_parallel_threshold_paths():
     assert np.array_equal(
         quantized, np.around(multiplier * values) / multiplier
     )
+
+
+def test_serial_parallel_threshold_boundary():
+    for n in (_kernels.PARALLEL_THRESHOLD - 1, _kernels.PARALLEL_THRESHOLD):
+        raw = np.arange(n, dtype=np.int16)
+        unpacked, mask = _kernels.unpack(
+            raw, 0.25, -3.0, fill=np.int16(-1)
+        )
+        assert np.array_equal(unpacked, raw.astype(np.float64) * 0.25 - 3.0)
+        assert mask.sum() == n // 65536
+
+        values = np.linspace(-1.0, 1.0, n)
+        quantized = _kernels.quantize(values, 3)
+        multiplier = 2.0 ** np.ceil(np.log2(1000.0))
+        assert np.array_equal(
+            quantized, np.around(multiplier * values) / multiplier
+        )
 
 
 def test_kernel_errors_are_not_silently_ignored():

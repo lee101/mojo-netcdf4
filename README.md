@@ -84,19 +84,24 @@ Python 3.13.14, netCDF4 1.7.4.
 
 | case | mojo-netcdf4 | netCDF4 | result |
 |---|---:|---:|---:|
-| scaled int16 read, 5M | 35.26 ms | 86.22 ms | 2.45x faster |
-| scaled int16 write, 5M | 15.21 ms | 146.61 ms | 9.64x faster |
-| LSD-3 float64 write, 5M | 34.18 ms | 119.28 ms | 3.49x faster |
-| plain float64 read, 5M | 51.69 ms | 47.60 ms | 1.09x slower |
+| scaled int16 read, 5M | 17.67 ms | 48.85 ms | 2.76x faster |
+| scaled int16 write, 5M | 12.27 ms | 66.93 ms | 5.46x faster |
+| LSD-3 float64 write, 5M | 27.87 ms | 60.76 ms | 2.18x faster |
+| plain float64 read, 5M | 28.16 ms | 27.76 ms | 1.01x slower |
 
 The packed write uses one SIMD pass instead of NumPy subtraction, division,
 rounding, casting, and masked-fill temporaries. Scaled decode and mask work is
-split into independent CPU chunks only for large arrays. Full
+split into 262,144-element CPU chunks only at or above 1,048,576 elements;
+decode and mask share one parallel launch. Quantization uses the same threshold
+and chunking. Smaller inputs stay serial to avoid thread-launch overhead. Full
 contiguous LSD writes avoid a second backend quantization pass, while plain
 reads delegate directly to the backend because there is no transform to
-accelerate.
+accelerate. Against the serial kernels under the same compiler, scaled read
+improved from 27.63 ms to 17.67 ms and LSD write from 34.92 ms to 27.87 ms.
 
-There is no GPU path.
+There is no GPU path. These transforms perform only about 0.15--0.3 floating
+point operations per byte moved, well below the roughly 2 FLOP/byte threshold
+where device transfer and launch costs can be justified.
 
 ## How it works
 
