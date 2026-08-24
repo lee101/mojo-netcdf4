@@ -1,15 +1,11 @@
 """Numeric transforms around netCDF variable I/O."""
 
-from std.algorithm import parallelize
-from std.gpu.host import DeviceContext
 from std.math import round
 from std.sys.info import simd_width_of
 
 comptime BPtr = UnsafePointer[UInt8, AnyOrigin[mut=True]]
 comptime DPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
 comptime W = simd_width_of[DType.float64]()
-comptime PARALLEL_THRESHOLD = 1_048_576
-comptime PARALLEL_GRAIN = 262_144
 
 
 @always_inline
@@ -181,24 +177,7 @@ def decode_values(
     scale: Float64,
     offset: Float64,
 ):
-    if n < PARALLEL_THRESHOLD:
-        decode_range(src, dst, 0, n, kind, scale, offset)
-        return
-
-    var tasks = (n + PARALLEL_GRAIN - 1) // PARALLEL_GRAIN
-
-    @parameter
-    @__copy_capture(src, dst, n, kind, scale, offset)
-    def work(task: Int):
-        var start = task * PARALLEL_GRAIN
-        var end = min(start + PARALLEL_GRAIN, n)
-        decode_range(src, dst, start, end, kind, scale, offset)
-
-    try:
-        var ctx = DeviceContext(api="cpu")
-        parallelize[work](tasks, ctx=ctx)
-    except:
-        decode_range(src, dst, 0, n, kind, scale, offset)
+    decode_range(src, dst, 0, n, kind, scale, offset)
 
 
 @always_inline
@@ -422,35 +401,10 @@ def mask_values(
     valid_max: Float64,
     flags: Int,
 ):
-    if n < PARALLEL_THRESHOLD:
-        mask_range(
-            src, mask, 0, n, kind, fill, missing,
-            valid_min, valid_max, flags,
-        )
-        return
-
-    var tasks = (n + PARALLEL_GRAIN - 1) // PARALLEL_GRAIN
-
-    @parameter
-    @__copy_capture(
-        src, mask, n, kind, fill, missing, valid_min, valid_max, flags
+    mask_range(
+        src, mask, 0, n, kind, fill, missing,
+        valid_min, valid_max, flags,
     )
-    def work(task: Int):
-        var start = task * PARALLEL_GRAIN
-        var end = min(start + PARALLEL_GRAIN, n)
-        mask_range(
-            src, mask, start, end, kind, fill, missing,
-            valid_min, valid_max, flags,
-        )
-
-    try:
-        var ctx = DeviceContext(api="cpu")
-        parallelize[work](tasks, ctx=ctx)
-    except:
-        mask_range(
-            src, mask, 0, n, kind, fill, missing,
-            valid_min, valid_max, flags,
-        )
 
 
 @export("mnc_unpack_f64")
@@ -742,22 +696,5 @@ def mnc_quantize_f64(
     var src = DPtr(unsafe_from_address=src_addr)
     var dst = DPtr(unsafe_from_address=dst_addr)
     var inverse = 1.0 / multiplier
-    if n < PARALLEL_THRESHOLD:
-        quantize_range(src, dst, 0, n, multiplier, inverse)
-        return 0
-
-    var tasks = (n + PARALLEL_GRAIN - 1) // PARALLEL_GRAIN
-
-    @parameter
-    @__copy_capture(src, dst, n, multiplier, inverse)
-    def work(task: Int):
-        var start = task * PARALLEL_GRAIN
-        var end = min(start + PARALLEL_GRAIN, n)
-        quantize_range(src, dst, start, end, multiplier, inverse)
-
-    try:
-        var ctx = DeviceContext(api="cpu")
-        parallelize[work](tasks, ctx=ctx)
-    except:
-        quantize_range(src, dst, 0, n, multiplier, inverse)
+    quantize_range(src, dst, 0, n, multiplier, inverse)
     return 0
