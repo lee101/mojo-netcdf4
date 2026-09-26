@@ -88,9 +88,38 @@ merely renamed, and the bare name drawing no "did you mean" hint means it was
 removed rather than moved. There is no CPU parallelism reachable from the
 stdlib, so the performance ceiling for these ports is SIMD.
 
-Do NOT write `from std.algorithm import parallelize` and assume it works. Keep
-the work serial and say so honestly in the benchmark table; only use something
-from the `max` package if you have compiled it and measured it.
+Do NOT write `from std.algorithm import parallelize` and assume it works. Either
+keep the work serial and say so honestly in the benchmark table, or use the
+`max` path in 4a below, which is compiled and measured on this toolchain.
+
+### 4a. The stdlib has none, but `max` does — verified on this toolchain
+
+CPU parallelism is still reachable, just not from `std`. Compiled, run and
+measured here:
+
+- `from max.algorithm import parallelize` needs the `max` conda package
+  installed: it ships the precompiled modules under `<prefix>/lib/mojo`
+  (`max.mojoc`, `algorithm.mojoc`). Without it the error is
+  `unable to locate module 'max'`. Add `max = "==26.7.0.dev2026092605"` beside
+  the `mojo` pin in `[dependencies]`; the `mojo` pin itself does not move.
+- Signatures: `parallelize(func, num_work_items, num_workers)` and
+  `parallelize(func, num_work_items)`. The old `parallelize[f](...)` bracket
+  form no longer type-checks.
+- `func` must convert to `def(Int) -> None`, so a `@parameter` closure is
+  rejected with `capturing thin`. Write the body as a nested
+  `def work(i: Int) {imm}:`; nested `{imm}` bodies may call each other, which
+  is what makes the chunked variants work.
+- Pass an explicit worker count, as every working reference does
+  (`parallelize(work, chunks, min(chunks, MAX_WORKERS))`). The 2-argument form
+  crashed the worker launch in a ctypes-hosted shared library.
+- `sync_parallelize(func, num_work_items, ctx=None)` accepts a `raises`
+  closure, so `@parameter` type-checks there, but it segfaulted from the same
+  ctypes host. Do not use it.
+- Results are written straight into the caller's per-index output slots, so a
+  parallel run is bit-identical to the serial fallback; the existing
+  threshold-straddling tests (`test_parallel_threshold_paths`,
+  `test_serial_parallel_threshold_boundary`) cover both sides of every
+  threshold.
 
 ## 5. GPU — the `std.gpu` module is GONE in this toolchain
 

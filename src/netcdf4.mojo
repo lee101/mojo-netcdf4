@@ -1,6 +1,6 @@
 """Numeric transforms around netCDF variable I/O."""
 
-from std.algorithm.functional import parallelize
+from max.algorithm import parallelize
 from std.math import round
 from std.sys.info import simd_width_of
 
@@ -186,14 +186,13 @@ def decode_values(
         return
     var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
 
-    @parameter
-    def work(chunk: Int):
+    def work(chunk: Int) {imm}:
         var start = chunk * GRAIN_SIZE
         decode_range(
             src, dst, start, min(start + GRAIN_SIZE, n), kind, scale, offset
         )
 
-    parallelize[work](chunks, min(chunks, MAX_WORKERS))
+    parallelize(work, chunks, min(chunks, MAX_WORKERS))
 
 
 @always_inline
@@ -425,15 +424,14 @@ def mask_values(
         return
     var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
 
-    @parameter
-    def work(chunk: Int):
+    def work(chunk: Int) {imm}:
         var start = chunk * GRAIN_SIZE
         mask_range(
             src, mask, start, min(start + GRAIN_SIZE, n), kind, fill,
             missing, valid_min, valid_max, flags,
         )
 
-    parallelize[work](chunks, min(chunks, MAX_WORKERS))
+    parallelize(work, chunks, min(chunks, MAX_WORKERS))
 
 
 def unpack_values(
@@ -463,8 +461,7 @@ def unpack_values(
         return
     var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
 
-    @parameter
-    def work(chunk: Int):
+    def work(chunk: Int) {imm}:
         var start = chunk * GRAIN_SIZE
         var end = min(start + GRAIN_SIZE, n)
         decode_range(src, dst, start, end, kind, scale, offset)
@@ -473,7 +470,7 @@ def unpack_values(
             valid_min, valid_max, flags,
         )
 
-    parallelize[work](chunks, min(chunks, MAX_WORKERS))
+    parallelize(work, chunks, min(chunks, MAX_WORKERS))
 
 
 @export("mnc_unpack_f64")
@@ -773,14 +770,13 @@ def quantize_values(
         return
     var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
 
-    @parameter
-    def work(chunk: Int):
+    def work(chunk: Int) {imm}:
         var start = chunk * GRAIN_SIZE
         quantize_range(
             src, dst, start, min(start + GRAIN_SIZE, n), multiplier, inverse
         )
 
-    parallelize[work](chunks, min(chunks, MAX_WORKERS))
+    parallelize(work, chunks, min(chunks, MAX_WORKERS))
 
 
 @export("mnc_quantize_f64")
