@@ -49,7 +49,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -62,7 +62,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -75,7 +75,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -88,7 +88,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -101,7 +101,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -114,7 +114,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -127,7 +127,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -140,7 +140,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -153,7 +153,7 @@ def decode_range(
         while i + W <= end:
             dst.store(
                 i,
-                values.load[width=W, alignment=1](i).cast[DType.float64]()
+                values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
                 * scale
                 + offset,
             )
@@ -165,7 +165,7 @@ def decode_range(
         var values = src.bitcast[Float64]()
         while i + W <= end:
             dst.store(
-                i, values.load[width=W, alignment=1](i) * scale + offset
+                i, values.unsafe_load[width=W, alignment=1](i) * scale + offset
             )
             i += W
         while i < end:
@@ -267,7 +267,7 @@ def mask_range(
         var values = src.bitcast[Int8]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -281,7 +281,7 @@ def mask_range(
         var values = src.bitcast[UInt8]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -295,7 +295,7 @@ def mask_range(
         var values = src.bitcast[Int16]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -309,7 +309,7 @@ def mask_range(
         var values = src.bitcast[UInt16]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -323,7 +323,7 @@ def mask_range(
         var values = src.bitcast[Int32]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -337,7 +337,7 @@ def mask_range(
         var values = src.bitcast[UInt32]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -351,7 +351,7 @@ def mask_range(
         var values = src.bitcast[Int64]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -365,7 +365,7 @@ def mask_range(
         var values = src.bitcast[UInt64]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -379,7 +379,7 @@ def mask_range(
         var values = src.bitcast[Float32]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i).cast[DType.float64](),
+                mask, i, values.unsafe_load[width=W, alignment=1](i).cast[DType.float64](),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -393,7 +393,7 @@ def mask_range(
         var values = src.bitcast[Float64]()
         while i + W <= end:
             store_mask_vector(
-                mask, i, values.load[width=W, alignment=1](i),
+                mask, i, values.unsafe_load[width=W, alignment=1](i),
                 fill, missing, valid_min, valid_max, flags,
             )
             i += W
@@ -611,7 +611,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.int8](),
             )
             i += W
@@ -623,7 +623,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.uint8](),
             )
             i += W
@@ -635,7 +635,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.int16](),
             )
             i += W
@@ -647,7 +647,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.uint16](),
             )
             i += W
@@ -659,7 +659,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.int32](),
             )
             i += W
@@ -671,7 +671,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.uint32](),
             )
             i += W
@@ -683,7 +683,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.int64](),
             )
             i += W
@@ -695,7 +695,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                round((src.load[width=W](i) - offset) / scale)
+                round((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.uint64](),
             )
             i += W
@@ -707,7 +707,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                ((src.load[width=W](i) - offset) / scale)
+                ((src.unsafe_load[width=W](i) - offset) / scale)
                 .cast[DType.float32](),
             )
             i += W
@@ -719,7 +719,7 @@ def pack_range(
         while i + W <= end:
             values.store(
                 i,
-                (src.load[width=W](i) - offset) / scale,
+                (src.unsafe_load[width=W](i) - offset) / scale,
             )
             i += W
         while i < end:
@@ -750,7 +750,7 @@ def quantize_range(
     while i + W <= end:
         dst.store(
             i,
-            round(src.load[width=W](i) * multiplier) * inverse,
+            round(src.unsafe_load[width=W](i) * multiplier) * inverse,
         )
         i += W
     while i < end:
