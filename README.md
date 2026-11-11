@@ -267,9 +267,34 @@ both through the raw symbols and through the public `_kernels` wrappers
 `test_public_path_serial_and_parallel_agree`). `build/build.sh` accepts
 `MNC_SRC`/`MNC_OUT` so that variant build does not touch `dist/`.
 
-There is no GPU path. These transforms perform only about 0.15--0.3 floating
-point operations per byte moved, well below the roughly 2 FLOP/byte threshold
-where device transfer and launch costs can be justified.
+### GPU phase: CPU only, and why
+
+**CPU only: memory-bound.** Every kernel in this port falls under the gate of
+roughly 2 floating point operations per byte moved, so no kernel was ported to
+the GPU. The counts below are per element of the transform, from the bodies in
+`src/netcdf4.mojo` (2 flops = one fused multiply-add; `round` is counted as one
+operation), and match the `bench/analysis.md` table:
+
+| kernel | work per element | bytes moved per element | flops/byte |
+|---|---|---:|---:|
+| `mnc_quantize_f64` (`quantize_range`) | ~3 (mul, round, mul) | 16 (f8 read + f8 write) | **0.19** |
+| `mnc_unpack_f64` (`decode_range` + fused mask) | ~2.5 (fma) + ~4 mask compares | 18 (i2 read twice + f8 + u1) | **~0.36** |
+| `mnc_pack_f64` (`pack_range`) | ~2 (sub, div) | 12 (f8 read + i2 write) | **0.17** |
+| `mnc_pack_f64` masked (`pack_masked`, float storage) | ~4 (sub, div, select, convert) | 16 (f8 + i2 + u1 x2) | **0.25** |
+| `mnc_mask_f64` (`mask_range`) | 5 at 4 flags (4 compares + select) | 3 (i2 read + u1 write) | **~1.7** (0.67 by the analysis table's byte count) |
+
+Even the heaviest kernel, the mask, is below the threshold, and its bytes are
+dominated by a 1-byte-per-element write, so it is bandwidth-bound rather than
+arithmetic-bound. A device copy pair plus a launch would cost more than the
+7--16 ms these kernels take at the sizes real callers pass (`pixi run bench`
+uses 5M elements; the largest measured input is 80 MB).
+
+The GPU availability gate was also checked, for the record:
+`nvidia-smi --query-gpu=memory.free --format=csv,noheader` reported **6262 MiB
+free** on an RTX 5090, i.e. above the 4000 MiB floor, so the phase was skipped
+on the flops/byte gate, not on device availability. No GPU code, no GPU tests
+and no GPU benchmark was added, so there is nothing to skip on a CPU-only host;
+the existing test suite runs the same on both.
 
 ## How it works
 
