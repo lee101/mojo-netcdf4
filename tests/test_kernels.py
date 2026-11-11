@@ -3,6 +3,14 @@ import pytest
 
 from mojonetcdf4 import _kernels
 
+# The SIMD width the kernels are built with: Float64 lanes on this AVX2 host
+# (no AVX-512), which is the `W` in src/netcdf4.mojo for every kernel.
+SIMD_W = 4
+# Lengths that exercise the vector body and the scalar tail: empty, shorter
+# than one vector, every side of one vector, and an odd length well past it.
+TAIL_LENGTHS = [0, 1, SIMD_W - 1, SIMD_W, SIMD_W + 1, 100_003]
+LARGE_ODD = 1_000_003
+
 
 @pytest.mark.parametrize(
     "dtype",
@@ -127,3 +135,75 @@ def test_kernel_errors_are_not_silently_ignored():
         _kernels._checked_call(
             "mnc_quantize_f64", 0, 0, 1, 1.0
         )
+
+
+# --- SIMD tail coverage -----------------------------------------------------
+# Every kernel runs a W-lane body and a scalar tail. These cases pin the four
+# fused/masked kernels at lengths on both sides of W, at 0 and 1, and at a long
+# odd length, and compare against a NumPy reference of the same formula.
+
+LENGTHS = TAIL_LENGTHS + [LARGE_ODD]
+
+
+@pytest.mark.parametrize("n", LENGTHS)
+@pytest.mark.parametrize(
+    "dtype", ["i1", "u1", "i2", "u2", "i4", "u4", "i8", "u8", "f4", "f8"]
+)
+def test_unpack_with_mask_simd_tail(n, dtype):
+    dtype = np.dtype(dtype)
+    info = np.iinfo(dtype) if dtype.kind in "iu" else None
+    top = float(info.max) if info is not None else float(n)
+    raw = np.arange(n, dtype=dtype) if info is None else np.minimum(
+        np.arange(n), top
+    ).astype(dtype)
+    fill = dtype.type(3)
+    valid_min = dtype.type(2)
+    valid_max = dtype.type(min(max(n - 2, 0), int(top)))
+    decoded, mask = _kernels.unpack(
+        raw,
+        0.5,
+        -1.0,
+        fill=fill,
+        valid_min=valid_min,
+        valid_max=valid_max,
+    )
+    assert np.array_equal(
+        decoded, raw.astype(np.float64) * 0.5 - 1.0
+    )
+    expected = (raw == fill) | (raw < valid_min) | (raw > valid_max)
+    assert np.array_equal(mask, expected)
+    # The mask kernel alone must agree with the mask the fused decode produced.
+    assert np.array_equal(
+        _kernels.make_mask(
+            raw, fill=fill, valid_min=valid_min, valid_max=valid_max
+        ),
+        expected,
+    )
+
+
+@pytest.mark.parametrize("n", LENGTHS)
+@pytest.mark.parametrize("dtype", ["i1", "u1", "i2", "u2", "f4", "f8"])
+def test_pack_simd_tail(n, dtype):
+    info = np.iinfo(np.dtype(dtype)) if np.dtype(dtype).kind in "iu" else None
+    fill = info.max if info is not None else np.dtype(dtype).type(-32767.0)
+    values = np.arange(n, dtype=np.float64) - n / 2.0
+    data = np.ma.array(
+        values,
+        mask=np.arange(n) % 7 == 0,
+    )
+    packed = _kernels.pack(data, dtype, 0.5, 10.0, fill)
+    unmasked = ~np.ma.getmaskarray(data)
+    expected = np.full(n, fill, dtype=np.dtype(dtype))
+    expected[unmasked] = (values[unmasked] - 10.0) / 0.5
+    assert np.array_equal(packed, expected.astype(np.dtype(dtype)))
+
+
+@pytest.mark.parametrize("n", LENGTHS)
+def test_quantize_simd_tail(n):
+    values = np.linspace(-1.0, 1.0, n)
+    quantized = _kernels.quantize(values, 3)
+    multiplier = 2.0 ** np.ceil(np.log2(1000.0))
+    assert np.array_equal(
+        quantized, np.around(multiplier * values) / multiplier
+    )
+

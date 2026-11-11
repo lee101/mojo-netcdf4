@@ -434,6 +434,215 @@ def mask_values(
     parallelize(work, chunks, min(chunks, MAX_WORKERS))
 
 
+def unpack_mask_range(
+    src: BPtr,
+    dst: DPtr,
+    src2: BPtr,
+    mask: BPtr,
+    start: Int,
+    end: Int,
+    kind: Int,
+    scale: Float64,
+    offset: Float64,
+    fill: Float64,
+    missing: Float64,
+    valid_min: Float64,
+    valid_max: Float64,
+    flags: Int,
+):
+    """Decode `src` into `dst` and mask `src2` into `mask` in one pass.
+
+    The two stages are elementwise over ranges of the same length and write
+    disjoint outputs, so interleaving them is exact: there is no loop-carried
+    dependence, and every element computes the same expression it did in
+    `decode_range` and `store_mask_vector`. They are fused so their loads and
+    stores overlap in one traversal instead of two. `src` and `src2` are
+    usually the same packed buffer (`unpack_values` passes it for both), which
+    also fuses the read of it.
+    """
+    var i = start
+    if kind == 1:
+        var values = src.bitcast[Int8]()
+        var mvalues = src2.bitcast[Int8]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 2:
+        var values = src.bitcast[UInt8]()
+        var mvalues = src2.bitcast[UInt8]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 3:
+        var values = src.bitcast[Int16]()
+        var mvalues = src2.bitcast[Int16]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 4:
+        var values = src.bitcast[UInt16]()
+        var mvalues = src2.bitcast[UInt16]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 5:
+        var values = src.bitcast[Int32]()
+        var mvalues = src2.bitcast[Int32]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 6:
+        var values = src.bitcast[UInt32]()
+        var mvalues = src2.bitcast[UInt32]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 7:
+        var values = src.bitcast[Int64]()
+        var mvalues = src2.bitcast[Int64]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 8:
+        var values = src.bitcast[UInt64]()
+        var mvalues = src2.bitcast[UInt64]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    elif kind == 9:
+        var values = src.bitcast[Float32]()
+        var mvalues = src2.bitcast[Float32]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i).cast[DType.float64]()
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = Float64(values[i]) * scale + offset
+            store_mask_scalar(
+                mask, i, Float64(mvalues[i]), fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+    else:
+        var values = src.bitcast[Float64]()
+        var mvalues = src2.bitcast[Float64]()
+        while i + W <= end:
+            var v = values.unsafe_load[width=W, alignment=1](i)
+            dst.store(i, v * scale + offset)
+            var m = mvalues.unsafe_load[width=W, alignment=1](i)
+            store_mask_vector(
+                mask, i, m, fill, missing, valid_min, valid_max, flags
+            )
+            i += W
+        while i < end:
+            dst[i] = values[i] * scale + offset
+            store_mask_scalar(
+                mask, i, mvalues[i], fill, missing,
+                valid_min, valid_max, flags,
+            )
+            i += 1
+
+
 def unpack_values(
     src: BPtr,
     dst: DPtr,
@@ -453,9 +662,8 @@ def unpack_values(
         decode_values(src, dst, n, kind, scale, offset)
         return
     if n < PARALLEL_THRESHOLD:
-        decode_range(src, dst, 0, n, kind, scale, offset)
-        mask_range(
-            raw, mask, 0, n, kind, fill, missing,
+        unpack_mask_range(
+            src, dst, raw, mask, 0, n, kind, scale, offset, fill, missing,
             valid_min, valid_max, flags,
         )
         return
@@ -464,9 +672,8 @@ def unpack_values(
     def work(chunk: Int) {imm}:
         var start = chunk * GRAIN_SIZE
         var end = min(start + GRAIN_SIZE, n)
-        decode_range(src, dst, start, end, kind, scale, offset)
-        mask_range(
-            raw, mask, start, end, kind, fill, missing,
+        unpack_mask_range(
+            src, dst, raw, mask, start, end, kind, scale, offset, fill, missing,
             valid_min, valid_max, flags,
         )
 
@@ -568,7 +775,7 @@ def mnc_pack_f64(
     if mask_addr == 0:
         pack_values(src, dst, n, kind, scale, offset)
     else:
-        pack_masked_kind(
+        pack_masked_values(
             src,
             BPtr(unsafe_from_address=mask_addr),
             dst,
@@ -581,12 +788,50 @@ def mnc_pack_f64(
     return 0
 
 
+def pack_masked_values(
+    src: DPtr,
+    mask: BPtr,
+    dst: BPtr,
+    n: Int,
+    kind: Int,
+    scale: Float64,
+    offset: Float64,
+    fill: Float64,
+):
+    """Parallel masked pack, chunked like the other kernels.
+
+    `pack_masked` used to run the whole array serially even above the parallel
+    threshold, unlike `decode_values`, `mask_values` and `quantize_values`.
+    """
+    if n < PARALLEL_THRESHOLD:
+        pack_masked_range(src, mask, dst, 0, n, kind, scale, offset, fill)
+        return
+    var chunks = (n + GRAIN_SIZE - 1) // GRAIN_SIZE
+
+    def work(chunk: Int) {imm}:
+        var start = chunk * GRAIN_SIZE
+        pack_masked_range(
+            src,
+            mask,
+            dst,
+            start,
+            min(start + GRAIN_SIZE, n),
+            kind,
+            scale,
+            offset,
+            fill,
+        )
+
+    parallelize(work, chunks, min(chunks, MAX_WORKERS))
+
+
 @always_inline
 def pack_masked[D: DType](
     src: DPtr,
     mask: BPtr,
     dst: BPtr,
-    n: Int,
+    start: Int,
+    end: Int,
     scale: Float64,
     offset: Float64,
     fill: Float64,
@@ -597,12 +842,13 @@ def pack_masked[D: DType](
     conversion expression the scalar path always used: a compiler turns it into
     one packed convert per vector, and it preserves that path's out-of-range
     result exactly, which a hand-written SIMD convert would not (it widens
-    32-bit storage types and narrows 16-bit ones).
+    32-bit storage types and narrows 16-bit ones). A guarded SIMD rewrite of
+    the integer path was measured slower at 5 M (see bench/analysis.md §11).
     """
     var values = dst.bitcast[Scalar[D]]()
     var masked = mask.bitcast[UInt8]()
     var zero = SIMD[DType.uint8, W](0)
-    var i = 0
+    var i = start
     var floats = D.is_floating_point()
 
     @parameter
@@ -614,46 +860,47 @@ def pack_masked[D: DType](
 
     if floats:
         var fill_v = SIMD[D, W](Scalar[D](fill))
-        while i + W <= n:
+        while i + W <= end:
             var set = masked.unsafe_load[width=W, alignment=1](i).ne(zero)
             var value = (src.unsafe_load[width=W](i) - offset) / scale
             values.store(i, set.select(fill_v, value.cast[D]()))
             i += W
-    while i < n:
+    while i < end:
         store_scalar(i)
         i += 1
 
 
-def pack_masked_kind(
+def pack_masked_range(
     src: DPtr,
     mask: BPtr,
     dst: BPtr,
-    n: Int,
+    start: Int,
+    end: Int,
     kind: Int,
     scale: Float64,
     offset: Float64,
     fill: Float64,
 ):
     if kind == 1:
-        pack_masked[DType.int8](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.int8](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 2:
-        pack_masked[DType.uint8](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.uint8](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 3:
-        pack_masked[DType.int16](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.int16](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 4:
-        pack_masked[DType.uint16](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.uint16](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 5:
-        pack_masked[DType.int32](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.int32](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 6:
-        pack_masked[DType.uint32](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.uint32](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 7:
-        pack_masked[DType.int64](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.int64](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 8:
-        pack_masked[DType.uint64](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.uint64](src, mask, dst, start, end, scale, offset, fill)
     elif kind == 9:
-        pack_masked[DType.float32](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.float32](src, mask, dst, start, end, scale, offset, fill)
     else:
-        pack_masked[DType.float64](src, mask, dst, n, scale, offset, fill)
+        pack_masked[DType.float64](src, mask, dst, start, end, scale, offset, fill)
 
 
 def pack_range(

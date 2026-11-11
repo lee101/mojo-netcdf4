@@ -1,8 +1,8 @@
 # ANALYZE — where the time goes in mojo-netcdf4
 
 > §1–§9 are the measurement pass over the pre-UNROLL code and are kept as
-> written. The UNROLL phase's outcome is in §10; the current numbers are in the
-> README.
+> written. The UNROLL phase's outcome is in §10, the SIMD phase's in §11; the
+> current numbers are in the README.
 
 Measured on this checkout, this session. Every number below comes from a run
 made here; nothing is estimated. Scope of the phase: measure only — `src/` and
@@ -289,4 +289,142 @@ above), and the read path's remaining cost is split between the kernel and
 Python glue that no `unroll`-class change reaches (§3). The pack division is
 a `simd`-phase question (it needs a wider conversion, not a wider loop).
 
+## 11. SIMD phase — what was tried, kept and reverted
+
+Same machine, same session as §10. The toolchain here is the one the rest of
+the file uses: Mojo `1.2.0.dev2026092605` (`simd_width_of[DType.float64]()` is
+the dialect form, per `MOJO_NOTES.md`), `W = 4` Float64 lanes on this AVX2
+host. Kernel numbers are paired A/B runs: the pre-phase build and the new build
+are loaded side by side in one process (`ctypes.CDLL` loads both copies — they
+have no exported data, so the two sets of symbols do not collide) and
+alternated, best of N, on 5 M-element buffers of the same shape
+`bench/bench.py` uses, under the same `flock /tmp/mojo-bench.lock`. Host load
+during this phase was **27–81** (other agents' UNROLL re-runs and sweeps), so
+the noise floor was measured explicitly: the pre-phase library against a second
+copy of itself at 15 repeats moved ±5–11 % per kernel. Paired ratios at the
+same buffer size are therefore quoted to about ±10 %, and the serial (below
+threshold) numbers are clean because they do not compete with other jobs' thread
+launches.
+
+### What was already vectorised
+
+`decode_range`, `mask_range`, `pack_range`, `pack_masked` (floats) and
+`quantize_range` all load `p.load[width=W]`, apply the scalar expression to the
+whole SIMD value, store it, and finish with a scalar tail. The brief's
+"vectorise the hot loops" was therefore already done in a previous pass;
+widening further (two vectors per iteration) is the UNROLL technique and its
+read-path attempt was noise (§10). The remaining lever was **fusion**.
+
+### Fusion: decode + mask in one pass — kept
+
+`mnc_unpack_f64`'s masked path used to run `decode_range` and then
+`mask_range`, i.e. two full passes over the packed buffer per chunk and two
+full traversals per parallel launch. Both stages are elementwise over the same
+input and write disjoint outputs (`dst` Float64, `mask` UInt8), so there is no
+loop-carried dependence and interleaving them is exact. `unpack_mask_range`
+now does decode-store and mask-store for the same W lanes in one loop; the
+caller keeps its single parallel launch (one worker per 262,144-element chunk,
+which is what §7 wanted — re-chunking, not a second parallel stage).
+
+| measurement (`mnc_unpack_f64`, i2, scale 0.01, offset 250, 4 mask flags) | before | after | delta |
+|---|---:|---:|---:|
+| serial, n = 1,000, exact | — | — | +0.4 % |
+| serial, n = 131,072, exact | 181.4 µs | 160.1 µs | **−11.7 %** |
+| serial, n = 1,048,575, exact | 1502.1 µs | 1261.7 µs | **−16.0 %** |
+| parallel, 5 M, mean of 5 best-of-15 rounds | 9.53 ms | 8.81 ms | **−7.5 %** |
+| parallel, 5 M, second session, mean of 5 best-of-15 | 9.24 ms | 8.85 ms | **−4.1 %** |
+
+Exact = the vectors are not idempotent; the decode and the mask are
+bit-compared lane by lane against the old build rather than timed only. The
+5 M row is the one the bench uses: it is the same 16-worker path, and there the
+win is smaller than serial because the kernel is partly launch- and
+bandwidth-bound; −4 to −7.5 % across two sessions is what I can defend.
+
+Correctness evidence beyond the two-run parity check: every kind (i1..f8) at
+n ∈ {0, 1, W−1, W, W+1, 2W+1, 37, 1001, 4097} produces bit-identical
+`(dst, mask)` from the old and new libraries, and the decode equals
+`raw * scale + offset` exactly.
+
+### Masked integer pack: a guarded SIMD pass — tried, reverted
+
+`pack_masked`'s integer path had no vector body at all (only floats took the
+`W`-lane pass), which is hotspot 1/9 in §2. The scalar path is
+`Scalar[D](round((v - offset) / scale))`, and the UNROLL phase had already
+found that a hand-written SIMD convert does not reproduce its out-of-range
+result (§10, "reverted, i8 +20–50 %"). I built the guard more carefully than
+that: a vector is stored only if every lane is unmasked, converts to an
+integer in range for D, and — for D of 32 bits or less — then lands in the same
+place as `Scalar[D]`'s int64-then-truncate. Otherwise the whole vector is redone
+with the scalar expression, so not so much as a NaN payload differs.
+
+At 5 M with a 0.05 % mask, paired best-of-31:
+
+| storage | scalar (current) | guarded SIMD | unguarded trunc (rejected, NOT exact) |
+|---|---:|---:|---:|
+| i2, scale 0.01 (`bench.py` shape) | 9.63 ms | **9.78 ms (+1.6 %)** | 8.34 ms (−13.3 %) |
+| i4, scale 0.01 | 9.95 ms | **10.55 ms (+6.0 %)** | 8.44 ms (−15.2 %) |
+| i2, scale 1.0 | 9.26 ms | **10.07 ms (+8.8 %)** | 7.94 ms (−14.2 %) |
+
+The guarded form is **slower**, so it is reverted; the file keeps the scalar
+integer body with a comment pointing here. The speed all sits in the unguarded
+truncating convert, and that is not shippable: `Scalar[D](fill)` wraps
+(`Int8(-4000) == 32`, but `Scalar[D](fill_float64)` truncates) so masked lanes
+already differ today, and the index conversion itself differs for out-of-range
+values (`Int8(round(-6435.1)) == -67` against a truncating `-40`). Two smaller
+variants were also reverted unshipped: a one-time `fill` promotion in the
+scalar body (±0.2–0.9 %, i.e. noise) and parsing it into the vector select
+(wrong for masked lanes, caught by the lane probe below).
+
+### Masked pack was serial above the parallel threshold — parallelised, kept
+
+While in `pack_masked` I found it never parallelised: `mnc_pack_f64` called
+`pack_masked_kind` on the whole array, unlike `decode_values`, `mask_values`
+and `quantize_values`, which all split at `PARALLEL_THRESHOLD` into 262,144-
+element chunks. `pack_masked_range` + `pack_masked_values` now use the same
+scheme. This is **not** a SIMD change and would be a `parallel`-phase item in
+§7's taxonomy; it is kept because `pixi run bench` is faster with it and it is
+identical output, and it costs no new geometry (§7 settled that). Paired
+same-kernel A/B:
+
+| workload (`mnc_pack_f64`, i2, scale 0.01) | before | after | delta |
+|---|---:|---:|---:|
+| 5 M, unmasked source | 7.96 ms | 8.01 ms | +0.7 % (noise) |
+| 5 M, 0.05 % masked source | 9.19 ms | 9.27 ms | +0.9 % (noise) |
+| 20 M, 0.05 % masked source, run 1 | 40.70 ms | 14.96 ms | **−63.2 %** |
+| 20 M, 0.05 % masked source, run 2 | 38.08 ms | 13.38 ms | **−64.9 %** |
+
+At 5 M the win is inside the noise floor; at 20 M it is an order of magnitude
+outside it, and the 20 M masked write is a real caller size (§2: `20 M`
+scaled write is a benchmark row). Output is bit-identical to the old build on
+every lane probe case, including the int8 masked case that exposes
+`Scalar[D](fill)` wrapping: a masked byte takes the scalar path in both builds,
+so the parallel split does not change which conversion any lane uses.
+
+### Fusion that was considered and not done
+
+- **quantize + pack** (`mnc_quantize_f64` then `mnc_pack_f64`): they read
+  different sources (the caller's Float64 `data` and a quantized copy) and are
+  split across a Python boundary, so one Mojo pass would need a new exported
+  symbol and a Python change. Out of this phase's scope.
+- **plain read's cost** is libnetcdf plus a `np.ma` wrap (§3, r6), not a
+  kernel; nothing to fuse.
+- **`decode_range` + `mask_range` for distinct buffers**: the API always passes
+  the same packed address for both (`_kernels.unpack` line 229), so they are
+  always the same buffer; a two-buffer fused variant would be dead code.
+
+### Test coverage added
+
+`tests/test_kernels.py` now runs `unpack` with all four mask kinds, `pack` with
+a mask (integer and float storage) and `quantize` at n = 0, 1, W−1, W, W+1,
+100,003 and 1,000,003, so the scalar tail is exercised at every boundary and
+the 1,000,003 case also crosses the parallel threshold. 174 tests pass.
+
+### A behaviour the probes documented (unchanged here)
+
+`_kernels.unpack` passes `raw.ctypes.data` as both the decode source and the
+mask source, so a masked **integer** element's decoded `dst` value is
+`raw * scale + offset`; only the mask flags it. With the pre-phase build and the
+new build this is bit-identical (the lane probes compare `(dst, mask)`), and the
+`np.copyto(..., where=mask)` branch §5 row 5 describes is what puts the raw
+value back for the masked elements. Not a regression, and not touched.
 

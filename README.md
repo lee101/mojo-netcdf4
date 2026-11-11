@@ -128,6 +128,62 @@ accelerate. Against the serial kernels of an earlier build under the same
 compiler, scaled read improved from 27.63 ms to 17.67 ms and LSD write from
 34.92 ms to 27.87 ms.
 
+### SIMD phase: fusion, and what it bought
+
+Kernel measurements, paired A/B in one process (old and new library loaded
+side by side and alternated, best of 15-31), on 5 M-element buffers of the
+same shape `bench/bench.py` uses. Host load was 27-81 during these runs; the
+old library paired against a second copy of itself moved by +/-5-11 % per
+kernel, so only the larger figures below are meaningful.
+
+| kernel | before | after | delta |
+|---|---:|---:|---:|
+| `mnc_unpack_f64`, i2 + 4 mask flags, serial, n = 1,048,575 | 1502.1 us | 1261.7 us | -16.0 % |
+| `mnc_unpack_f64`, i2 + 4 mask flags, serial, n = 131,072 | 181.4 us | 160.1 us | -11.7 % |
+| `mnc_unpack_f64`, i2 + 4 mask flags, 16 workers, 5 M (mean of 5 best-of-15 rounds) | 9.53 ms | 8.81 ms | -7.5 % |
+| same, second session | 9.24 ms | 8.85 ms | -4.1 % |
+| `mnc_pack_f64`, i2 masked, 5 M | 9.19 ms | 9.27 ms | +0.9 % (noise) |
+| `mnc_pack_f64`, i2 masked, 20 M | 40.70 ms | 14.96 ms | -63.2 % |
+| `mnc_pack_f64`, i2 masked, 20 M, second run | 38.08 ms | 13.38 ms | -64.9 % |
+
+Scaled reads now decode and mask the same SIMD lanes in one pass over the
+packed buffer, instead of one `decode_range` followed by one `mask_range` per
+chunk; the single parallel launch is unchanged. The masked pack, alone among
+the four kernels, used to run the whole array serially above 1,048,576
+elements; it now uses the same chunked parallel scheme, which makes no
+measurable difference at 5 M and a large one at 20 M.
+
+Both changes are output-identical to the previous build: the decode, the mask
+and the packed values are compared lane by lane for all ten storage types at
+n = 0, 1, W-1, W, W+1, 2W+1, 37, 1001 and 4097. `tests/test_kernels.py` now
+runs the fused decode, the mask kernel, the masked pack and quantization at
+n = 0, 1, W-1, W, W+1, 100003 and 1000003 (`W = 4` on this AVX2 host).
+
+A guarded SIMD conversion for the integer masked pack was built and rejected:
+it was 1.6-8.8 % slower than the scalar body at 5 M, and the unguarded version
+that is 13-15 % faster does not reproduce the scalar path's out-of-range
+result. The integer path therefore keeps its per-element expression. Details
+and the exactness argument are in `bench/analysis.md` §11.
+
+The end-to-end `pixi run bench` rows move by more than this phase does, because
+host load varied between 27-41 and 64 across the runs and both are best-of-five.
+The kernel figures above are the stable measurement.
+
+The end-to-end `pixi run bench` after the phase, for the record (load average
+41 at the time):
+
+| case | mojo-netcdf4 | netCDF4 | result |
+|---|---:|---:|---:|
+| scaled int16 read, 5M | 18.82 ms | 47.50 ms | 2.52x faster |
+| scaled int16 write, 5M | 13.89 ms | 66.51 ms | 4.79x faster |
+| LSD-3 float64 write, 5M | 34.34 ms | 70.82 ms | 2.06x faster |
+| plain float64 read, 5M | 32.73 ms | 38.83 ms | 1.19x faster |
+
+Against the pre-phase run in the table at the top of this section (14.10 /
+12.04 / 28.10 / 26.90 ms at load 23-28), the read row in particular is worse
+here at load 41, so this row set does not isolate the phase's effect; the
+paired kernel figures above do.
+
 There is no GPU path. These transforms perform only about 0.15--0.3 floating
 point operations per byte moved, well below the roughly 2 FLOP/byte threshold
 where device transfer and launch costs can be justified.
