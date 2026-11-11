@@ -74,26 +74,24 @@ runs as written after `pixi install` and `pixi run build`.
 
 ## Benchmarks
 
-Measured on this machine with `pixi run bench`; times are the best of five warm
-iterations.
-Files were uncompressed so the table exposes transform and variable-I/O cost,
-with the operating-system page cache warm. Lower is better.
+Measured on this machine with `pixi run bench`; times are the median of 9 runs
+(each the best of five warm iterations). Files were uncompressed so the table
+exposes transform and variable-I/O cost, with the operating-system page cache
+warm. Lower is better.
 
 Machine: Intel Xeon E5-2697 v4 at 2.30 GHz, Linux 6.8.0-147-generic,
 Python 3.13.14, netCDF4 1.7.4.
 
 | case | mojo-netcdf4 | netCDF4 | result |
 |---|---:|---:|---:|
-| scaled int16 read, 5M | 14.10 ms | 45.92 ms | 3.26x faster |
-| scaled int16 write, 5M | 12.04 ms | 69.82 ms | 5.80x faster |
-| LSD-3 float64 write, 5M | 28.10 ms | 84.15 ms | 2.99x faster |
-| plain float64 read, 5M | 26.90 ms | 25.39 ms | 1.06x slower |
+| scaled int16 read, 5M | 28.13 ms | 52.30 ms | 1.86x faster |
+| scaled int16 write, 5M | 14.12 ms | 67.11 ms | 4.75x faster |
+| LSD-3 float64 write, 5M | 46.18 ms | 65.23 ms | 1.41x faster |
+| plain float64 read, 5M | 27.69 ms | 36.22 ms | 1.31x faster |
 
 Host load was 23--28 during these runs (other workloads share the machine), so
-absolute times move by roughly 15--20 % between runs and the ratios move with
-them (the scaled-read ratio measured between 2.0x and 3.3x across this
-session's runs of the same builds). Times are best-of-five, as reported by
-`bench/bench.py`.
+absolute times move by roughly 15--20 % between runs. The plain float64 read
+case is highly variable; mojo-netcdf4 wins in ~2/3 of runs.
 
 ### Masked scaled write
 
