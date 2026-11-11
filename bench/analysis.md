@@ -1,5 +1,9 @@
 # ANALYZE — where the time goes in mojo-netcdf4
 
+> §1–§9 are the measurement pass over the pre-UNROLL code and are kept as
+> written. The UNROLL phase's outcome is in §10; the current numbers are in the
+> README.
+
 Measured on this checkout, this session. Every number below comes from a run
 made here; nothing is estimated. Scope of the phase: measure only — `src/` and
 `tests/` are unchanged (verified with `git status` / `git diff --stat`).
@@ -232,4 +236,57 @@ write at 16.1–19.5 ms. The spread is real host noise across processes, so the
 single point values in §2 should be read with it; the cross-implementation
 ratio (mojo/upstream measured with both in the same run) is the stable
 quantity, and that is what §1 and the `SLOWER` marks use.
+
+## 10. UNROLL phase — what was tried, kept and reverted
+
+Same machine, same session, load 23–28 throughout. Kernel numbers are paired
+A/B runs: the untouched build and the new build are loaded side by side in one
+process and alternated, best of 41, on 5 M-element buffers of the same shape
+`bench/bench.py` uses. `pixi run bench` numbers are best-of-5 as printed.
+
+Dialect facts this phase needed, checked by compiling (not in `MOJO_NOTES.md`):
+
+- `@parameter` **on a `for` statement is rejected**: `'for' statement does not
+  support decorators`. The supported unrolling form is `@parameter def body(j:
+  Int)` called with literal arguments.
+- there is no unroll **effect**: `unroll` is not an effect alias
+  (`unknown function effect 'unroll'`).
+- dtype-generic kernels work as `def f[D: DType](...)` with `Scalar[D]`,
+  `SIMD[D, W]` and `p.bitcast[Scalar[D]]()`; `p.bitcast[D]` does not compile
+  (`bitcast` takes a type, not a `DType`).
+- `Pointer` has no masked store and `SIMD` no `deferred_mask`, so an
+  out-of-range lane cannot be fixed by a masked write.
+
+| hotspot | change | paired kernel result | verdict |
+|---|---|---|---|
+| 1 / 9 masked `mnc_pack_f64` | per-element `if kind ==` chain replaced by a `DType`-parameterised `pack_masked`; `f4`/`f8` take a branchless SIMD select pass, integers take the per-element expression | i2 −11.6 %, i8 −6.7 %, f4 −21.5 % | **kept** |
+| — | same, with a hand-written SIMD convert plus an "out of range? redo scalar" guard | i2 −21 %, but i8 **+20–50 %** (spill-compiled fallback) | reverted |
+| — | `scale` division replaced by a precomputed reciprocal multiply | not shipped: zero rounded values changed on bench-shaped data, but the divide is bandwidth-hidden (`numpy` divide 8.60 ms vs multiply 9.02 ms at 5 M), so there was no gain to buy the float-rounding risk with | reverted (never applied) |
+| 2 read path `decode_range`/`mask_range` | 2× manual unroll of the `kind == 3` vector loop | −3.7 % / +8.7 % on alternating runs, i.e. noise, for 3× the loop body | reverted |
+| 7 `mnc_mask_f64` | `flags` bit tests hoisted out of the vector loop into resolved booleans | −0.3 % / +8.6 % on alternating runs | reverted |
+| 3 `mnc_quantize_f64` | inspected only: already multiply/round/multiply, no divide, no per-element branch, parallel above the threshold | n/a | unchanged |
+
+Multi-accumulator reductions (technique 1 of the phase brief) have **no
+counterpart** in this port: every kernel here is elementwise, and nothing
+accumulates a scalar, so there is no summation order to change and no last-bit
+difference to document. The closest thing, the mask `or`-reduction into a byte
+buffer, is fully associative and commutative on booleans, so reordering it was
+free — and it was not the bottleneck (§ above: hoisting the flag tests was
+noise).
+
+`pixi run bench` does not exercise the masked pack: it writes a plain
+`ndarray`, so `_kernels.pack` always takes the `mask_addr == 0` path (traced:
+six `pack()` calls, all `ndarray`, none masked). The masked row above was
+therefore measured separately through `Variable.__setitem__`, interleaved
+best-of-nine per build: untouched 15.87/16.48/16.65/17.16 ms, new
+14.68/15.69/15.69/16.04 ms for a 5 M i2 scaled write with a 0.05 % mask. The
+end-to-end win is smaller than the kernel win because Python-side work plus
+the libnetcdf write is about two thirds of that operation.
+
+What was **not** touched and why: `mnc_unpack_f64`, `mnc_mask_f64` and
+`mnc_quantize_f64` lose nothing measurable to unrolling or hoisting (rows
+above), and the read path's remaining cost is split between the kernel and
+Python glue that no `unroll`-class change reaches (§3). The pack division is
+a `simd`-phase question (it needs a wider conversion, not a wider loop).
+
 

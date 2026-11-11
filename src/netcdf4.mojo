@@ -567,33 +567,93 @@ def mnc_pack_f64(
     var dst = BPtr(unsafe_from_address=dst_addr)
     if mask_addr == 0:
         pack_values(src, dst, n, kind, scale, offset)
-        return 0
-    var mask = BPtr(unsafe_from_address=mask_addr)
-    for i in range(n):
-        var value = (src[i] - offset) / scale
-        if mask[i] != 0:
-            value = fill
-        if kind == 1:
-            dst.bitcast[Int8]()[i] = Int8(round(value))
-        elif kind == 2:
-            dst.bitcast[UInt8]()[i] = UInt8(round(value))
-        elif kind == 3:
-            dst.bitcast[Int16]()[i] = Int16(round(value))
-        elif kind == 4:
-            dst.bitcast[UInt16]()[i] = UInt16(round(value))
-        elif kind == 5:
-            dst.bitcast[Int32]()[i] = Int32(round(value))
-        elif kind == 6:
-            dst.bitcast[UInt32]()[i] = UInt32(round(value))
-        elif kind == 7:
-            dst.bitcast[Int64]()[i] = Int64(round(value))
-        elif kind == 8:
-            dst.bitcast[UInt64]()[i] = UInt64(round(value))
-        elif kind == 9:
-            dst.bitcast[Float32]()[i] = Float32(value)
-        else:
-            dst.bitcast[Float64]()[i] = value
+    else:
+        pack_masked_kind(
+            src,
+            BPtr(unsafe_from_address=mask_addr),
+            dst,
+            n,
+            kind,
+            scale,
+            offset,
+            fill,
+        )
     return 0
+
+
+@always_inline
+def pack_masked[D: DType](
+    src: DPtr,
+    mask: BPtr,
+    dst: BPtr,
+    n: Int,
+    scale: Float64,
+    offset: Float64,
+    fill: Float64,
+):
+    """Masked pack into storage type D.
+
+    Floats take one branchless SIMD pass. Integers keep the per-element
+    conversion expression the scalar path always used: a compiler turns it into
+    one packed convert per vector, and it preserves that path's out-of-range
+    result exactly, which a hand-written SIMD convert would not (it widens
+    32-bit storage types and narrows 16-bit ones).
+    """
+    var values = dst.bitcast[Scalar[D]]()
+    var masked = mask.bitcast[UInt8]()
+    var zero = SIMD[DType.uint8, W](0)
+    var i = 0
+    var floats = D.is_floating_point()
+
+    @parameter
+    def store_scalar(j: Int):
+        var value = (src[j] - offset) / scale
+        values[j] = Scalar[D](
+            fill if masked[j] != 0 else (value if floats else round(value))
+        )
+
+    if floats:
+        var fill_v = SIMD[D, W](Scalar[D](fill))
+        while i + W <= n:
+            var set = masked.unsafe_load[width=W, alignment=1](i).ne(zero)
+            var value = (src.unsafe_load[width=W](i) - offset) / scale
+            values.store(i, set.select(fill_v, value.cast[D]()))
+            i += W
+    while i < n:
+        store_scalar(i)
+        i += 1
+
+
+def pack_masked_kind(
+    src: DPtr,
+    mask: BPtr,
+    dst: BPtr,
+    n: Int,
+    kind: Int,
+    scale: Float64,
+    offset: Float64,
+    fill: Float64,
+):
+    if kind == 1:
+        pack_masked[DType.int8](src, mask, dst, n, scale, offset, fill)
+    elif kind == 2:
+        pack_masked[DType.uint8](src, mask, dst, n, scale, offset, fill)
+    elif kind == 3:
+        pack_masked[DType.int16](src, mask, dst, n, scale, offset, fill)
+    elif kind == 4:
+        pack_masked[DType.uint16](src, mask, dst, n, scale, offset, fill)
+    elif kind == 5:
+        pack_masked[DType.int32](src, mask, dst, n, scale, offset, fill)
+    elif kind == 6:
+        pack_masked[DType.uint32](src, mask, dst, n, scale, offset, fill)
+    elif kind == 7:
+        pack_masked[DType.int64](src, mask, dst, n, scale, offset, fill)
+    elif kind == 8:
+        pack_masked[DType.uint64](src, mask, dst, n, scale, offset, fill)
+    elif kind == 9:
+        pack_masked[DType.float32](src, mask, dst, n, scale, offset, fill)
+    else:
+        pack_masked[DType.float64](src, mask, dst, n, scale, offset, fill)
 
 
 def pack_range(
