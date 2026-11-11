@@ -7,9 +7,20 @@ from std.sys.info import simd_width_of
 comptime BPtr = UnsafePointer[UInt8, AnyOrigin[mut=True]]
 comptime DPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
 comptime W = simd_width_of[DType.float64]()
-comptime PARALLEL_THRESHOLD = 1048576
+# Every parallel launch costs a fixed ~5 ms of worker start-up on this toolchain
+# (max.algorithm `parallelize`, measured, see bench/analysis.md §12). That is
+# 10-20x the kernel's own time at 1 M elements, so a shared low threshold made
+# the library 2-10x SLOWER than serial from 1 M to 4 M. The crossover is measured
+# per kernel: unpack and pack win from 8,388,608, mask and quantize (the lighter
+# per-element bodies) do not until ~11 M. 10,485,760 is above unpack/pack's
+# crossover with a 25 % margin and never loses for any kernel (measured 1.00x
+# just below it, 0.98x at it, all wins from 11.5 M). Below it the caller runs
+# the serial body.
+comptime PARALLEL_THRESHOLD = 10485760
 comptime GRAIN_SIZE = 262144
-comptime MAX_WORKERS = 16
+# 4 workers is where the gain flattens on this host; 8 and 16 add nothing within
+# noise. See bench/analysis.md §12 for the 1/2/4/8/16 curve.
+comptime MAX_WORKERS = 4
 
 
 @always_inline

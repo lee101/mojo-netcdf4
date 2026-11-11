@@ -22,7 +22,10 @@ _SIGNATURES = {
     "mnc_pack_f64": ([I, I, I, I, I, F, F, F], I),
     "mnc_quantize_f64": ([I, I, I, F], I),
 }
-PARALLEL_THRESHOLD = 1_048_576
+# Mirrors PARALLEL_THRESHOLD in src/netcdf4.mojo; the kernels themselves switch
+# on the same value. Below it the kernel takes the serial body (bench/analysis.md
+# §12: a parallel launch costs a fixed ~5 ms here, so it only wins above ~8-11 M).
+PARALLEL_THRESHOLD = 10_485_760
 
 _KINDS = {
     np.dtype("i1"): 1,

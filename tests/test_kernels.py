@@ -207,3 +207,184 @@ def test_quantize_simd_tail(n):
         quantized, np.around(multiplier * values) / multiplier
     )
 
+
+# --- Serial vs parallel: identical output on identical input ----------------
+# These are the only tests that take the worker-pool path (the threshold is
+# 8,388,608 elements). They build the same source with PARALLEL_THRESHOLD set
+# past every test length, so the *library itself* dispatches to the serial body
+# while the normal build dispatches to `parallelize`, and compare the two
+# outputs lane by lane on the same input.
+
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+
+import pytest  # noqa: E402
+
+SERIAL_ONLY = None
+
+
+@pytest.fixture(scope="module")
+def serial_lib():
+    """A second build of the same source whose kernels never parallelize."""
+    global SERIAL_ONLY
+    if SERIAL_ONLY is not None:
+        return SERIAL_ONLY
+    with open(_kernels.SRC, encoding="utf-8") as stream:
+        source = stream.read()
+    needle = "comptime PARALLEL_THRESHOLD = 10485760"
+    if needle not in source:
+        pytest.skip("parallel threshold constant not found in the kernel source")
+    source = source.replace(needle, "comptime PARALLEL_THRESHOLD = 9223372036854775807")
+    tmp = tempfile.mkdtemp(prefix="mnc-serial-")
+    src_path = os.path.join(tmp, "netcdf4.mojo")
+    out_path = os.path.join(tmp, "libmojo-netcdf4-serial.so")
+    with open(src_path, "w", encoding="utf-8") as stream:
+        stream.write(source)
+    proc = subprocess.run(
+        ["bash", os.path.join(_kernels.ROOT, "build", "build.sh")],
+        env=dict(os.environ, MNC_SRC=src_path, MNC_OUT=out_path),
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode or not os.path.exists(out_path):
+        pytest.skip(f"serial reference build failed: {proc.stderr[-2000:]}")
+    SERIAL_ONLY = out_path
+    return SERIAL_ONLY
+
+
+def _loaded(path):
+    import ctypes
+
+    lib = ctypes.CDLL(path)
+    for name, (argtypes, restype) in _kernels._SIGNATURES.items():
+        fn = getattr(lib, name)
+        fn.argtypes = argtypes
+        fn.restype = restype
+    return lib
+
+
+def _inputs(n):
+    """Same bytes for both builds: pseudo-random packed i2 with a mask."""
+    rng = np.random.default_rng(2026)
+    raw = np.rint(rng.normal(280.0, 12.0, n)).astype(np.int16)
+    raw[: n // 2000] = -32767
+    raw[-max(n // 3000, 1):] = 25000
+    return raw
+
+
+def test_serial_and_parallel_outputs_match(serial_lib):
+    import ctypes
+
+    n = _kernels.PARALLEL_THRESHOLD + 1_000_003
+    raw = _inputs(n)
+    raw64 = raw.astype(np.float64)
+    packed_theirs = np.full(n, 0, dtype=np.int16)
+
+    par = _kernels.lib()
+    ser = _loaded(serial_lib)
+
+    # unpack with the four mask kinds live (fill + valid_min + valid_max).
+    decoded = np.empty(n, dtype=np.float64)
+    mask = np.empty(n, dtype=np.uint8)
+    decoded_ser = np.empty(n, dtype=np.float64)
+    mask_ser = np.empty(n, dtype=np.uint8)
+    args = (n, 3, 0.01, 250.0, -32767.0, 0.0, -30000.0, 30000.0, 1 | 4 | 8)
+    assert par.mnc_unpack_f64(
+        raw.ctypes.data, decoded.ctypes.data, raw.ctypes.data,
+        mask.ctypes.data, *args,
+    ) == 0
+    assert ser.mnc_unpack_f64(
+        raw.ctypes.data, decoded_ser.ctypes.data, raw.ctypes.data,
+        mask_ser.ctypes.data, *args,
+    ) == 0
+    assert decoded.tobytes() == decoded_ser.tobytes()
+    assert mask.tobytes() == mask_ser.tobytes()
+
+    # decode only (no mask buffer).
+    decoded[:] = np.nan
+    decoded_ser[:] = np.nan
+    assert par.mnc_unpack_f64(
+        raw.ctypes.data, decoded.ctypes.data, 0, 0,
+        n, 3, 0.01, 250.0, 0.0, 0.0, 0.0, 0.0, 0,
+    ) == 0
+    assert ser.mnc_unpack_f64(
+        raw.ctypes.data, decoded_ser.ctypes.data, 0, 0,
+        n, 3, 0.01, 250.0, 0.0, 0.0, 0.0, 0.0, 0,
+    ) == 0
+    assert decoded.tobytes() == decoded_ser.tobytes()
+
+    # mask kernel alone.
+    mask[:] = 7
+    mask_ser[:] = 7
+    mask_args = (n, 3, -32767.0, 0.0, -30000.0, 30000.0, 1 | 4 | 8)
+    assert par.mnc_mask_f64(
+        raw.ctypes.data, mask.ctypes.data, *mask_args,
+    ) == 0
+    assert ser.mnc_mask_f64(
+        raw.ctypes.data, mask_ser.ctypes.data, *mask_args,
+    ) == 0
+    assert mask.tobytes() == mask_ser.tobytes()
+
+    # masked pack, integer storage.
+    source_mask = (np.arange(n) % 977 == 0).astype(np.uint8)
+    packed = np.full(n, 0, dtype=np.int16)
+    packed_theirs[:] = -1
+    assert par.mnc_pack_f64(
+        raw64.ctypes.data, source_mask.ctypes.data, packed.ctypes.data,
+        n, 3, 0.01, 250.0, -32767.0,
+    ) == 0
+    assert ser.mnc_pack_f64(
+        raw64.ctypes.data, source_mask.ctypes.data, packed_theirs.ctypes.data,
+        n, 3, 0.01, 250.0, -32767.0,
+    ) == 0
+    assert packed.tobytes() == packed_theirs.tobytes()
+
+    # quantization.
+    quantized = np.empty(n, dtype=np.float64)
+    quantized_ser = np.empty(n, dtype=np.float64)
+    assert par.mnc_quantize_f64(
+        raw64.ctypes.data, quantized.ctypes.data, n, 1024.0,
+    ) == 0
+    assert ser.mnc_quantize_f64(
+        raw64.ctypes.data, quantized_ser.ctypes.data, n, 1024.0,
+    ) == 0
+    assert quantized.tobytes() == quantized_ser.tobytes()
+
+
+def test_public_path_serial_and_parallel_agree(serial_lib):
+    """The public wrappers, not the raw symbols, on the same arrays."""
+    n = _kernels.PARALLEL_THRESHOLD + 3
+    raw = _inputs(n)
+    source_mask = np.arange(n) % 3 == 0
+    kwargs = dict(fill=np.int16(-32767), valid_min=np.int16(-30000))
+
+    # Swap the module's library for the serial-only build, then restore.
+    original = _kernels._LIB
+    try:
+        _kernels._LIB = _loaded(serial_lib)
+        seq, mask_seq = _kernels.unpack(raw, 0.01, 250.0, **kwargs)
+        seq_mask = _kernels.make_mask(raw, **kwargs)
+        seq_packed = _kernels.pack(
+            np.ma.array(raw, mask=source_mask),
+            "i2", 0.01, 250.0, np.int16(-32767),
+        )
+        seq_quant = _kernels.quantize(raw.astype(np.float64), 3)
+    finally:
+        _kernels._LIB = original
+
+    par, mask_par = _kernels.unpack(raw, 0.01, 250.0, **kwargs)
+    par_mask = _kernels.make_mask(raw, **kwargs)
+    packed = _kernels.pack(
+        np.ma.array(raw, mask=source_mask),
+        "i2", 0.01, 250.0, np.int16(-32767),
+    )
+    quant = _kernels.quantize(raw.astype(np.float64), 3)
+
+    assert par.tobytes() == seq.tobytes()
+    assert mask_par.tobytes() == mask_seq.tobytes()
+    assert par_mask.tobytes() == seq_mask.tobytes()
+    assert packed.tobytes() == seq_packed.tobytes()
+    assert quant.tobytes() == seq_quant.tobytes()
+
+

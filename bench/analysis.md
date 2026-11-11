@@ -428,3 +428,137 @@ new build this is bit-identical (the lane probes compare `(dst, mask)`), and the
 `np.copyto(..., where=mask)` branch §5 row 5 describes is what puts the raw
 value back for the masked elements. Not a regression, and not touched.
 
+
+## 12. PARALLEL phase — threshold and cap, measured
+
+Same machine (Xeon E5-2697 v4, 72 threads, AVX2), same session, Mojo
+`1.2.0.dev2026092605`. Host load 17-27 throughout; every number below is a
+paired A/B in one process, the two libraries loaded side by side and alternated,
+best of 11-21. The serial reference is the **same source** built with
+`PARALLEL_THRESHOLD` set past every test length (`MNC_SRC`/`MNC_OUT` in
+`build/build.sh`), so the only difference is the dispatch.
+
+### The toolchain's launch cost, and why the old threshold was wrong
+
+`max.algorithm.parallelize` costs a **fixed ~5 ms per launch** on this host,
+regardless of the work. `bench/launch_cost.py`, `mnc_quantize_f64`, grain
+262,144:
+
+| chunks | n | ms | ms/M |
+|---:|---:|---:|---:|
+| 1 | 262,144 | 0.120 | 0.457 |
+| 2 | 524,288 | 0.232 | 0.442 |
+| 3 | 786,432 | 0.362 | 0.461 |
+| 4 | 1,048,576 | **4.426** | **4.221** |
+| 8 | 2,097,152 | 5.843 | 2.786 |
+
+The floor appears at a *total element count* (~1 M), not at a chunk count: the
+same table holds for grain 32 K (jump at chunk 32), 196 K (chunk 6), 512 K
+(chunk 2) and 1 M (chunk 2). Below it the call runs inline; above it a worker
+pool starts. Two back-to-back launches of 1 M each cost 5.0 ms + 5.0 ms, so it
+is per launch. The old `PARALLEL_THRESHOLD = 1,048,576` was placed exactly at
+the point where this cost first appears, so everything from 1 M to ~4 M was
+2-10x slower than the serial body:
+
+| n | serial | old parallel (16 workers) | ratio |
+|---:|---:|---:|---:|
+| 1,048,576 | 1.30 ms | 5.04 ms | 0.26x |
+| 2,097,152 | 3.25 ms | 5.94 ms | 0.55x |
+| 4,194,304 | 8.03 ms | 8.47 ms | 0.95x |
+| 5,000,000 | 10.03 ms | 9.51 ms | 1.05x |
+| 20,000,000 | 47.87 ms | 21.53 ms | 2.22x |
+
+Those are `mnc_unpack_f64` with the four mask kinds live, old binary against a
+threshold-disabled build of the pre-phase source.
+
+### Where the crossover actually is
+
+`bench/ab_parallel.py`, the shipped source, serial vs parallel:
+
+| n | unpack | pack | mask | quantize |
+|---:|---:|---:|---:|---:|
+| 1,048,576 | 1.00x | 1.02x | 0.98x | 1.07x |
+| 2,097,152 | 0.97x | 0.98x | 0.98x | 1.00x |
+| 4,194,304 | 0.99x | 0.99x | 1.02x | 0.96x |
+| 6,815,744 | 1.01x | 1.00x | 1.01x | 1.00x |
+| 7,864,320 | 1.02x | 0.99x | 0.99x | 1.01x |
+| 8,388,608 | 1.54x | 1.42x | **0.93x** | **0.93x** |
+| 8,912,896 | 1.55x | — | 0.98x | 0.95x |
+| 9,437,184 | 1.65x | 1.53x | 1.03x | 1.01x |
+| 10,485,759 | 1.01x | 1.01x | 1.00x | 1.02x |
+| 10,485,760 | 1.76x | 1.61x | 0.98x | 1.04x |
+| 11,534,336 | 1.77x | 1.72x | 1.06x | 1.11x |
+| 12,582,912 | 1.81x | 1.73x | 1.22x | 1.12x |
+| 16,777,216 | 2.16x | 1.94x | 1.43x | 1.38x |
+| 20,971,520 | 2.43x | 2.06x | 1.52x | 1.57x |
+
+Two things this table settled that a single shared cutoff would have got wrong:
+
+- The crossover is **per kernel**. `unpack`/`pack` win from 8,388,608; `mask`
+  and `quantize` (much lighter bodies: 7.5 ms and 9.1 ms serial at 8 M against
+  19.1 ms and 16.4 ms) do not clear the 5 ms launch cost there.
+- Choosing 8,388,608 because it is `unpack`'s crossover still loses for two of
+  four kernels at exactly that size, so it is a threshold with no margin. The
+  shared value is **10,485,760**: 25 % above `unpack`/`pack`'s crossover, at or
+  above `mask`/`quantize`'s, and measured the same as serial (1.00-1.02x) one
+  element below it. A threshold that loses to serial at its own value is worse
+  than no parallelism.
+
+### Worker cap
+
+`mnc_quantize_f64`, cap set at build time, serial vs each cap:
+
+| n | serial | 1 | 2 | 4 | 8 | 16 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4,194,304 | 3.66 ms | 2.44 | 7.75 | 7.60 | 7.13 | 7.20 |
+| 8,388,608 | 10.74 ms | 10.83 | 10.05 | 8.59 | 8.33 | 8.59 |
+| 16,777,216 | 21.81 ms | 21.99 | 15.36 | 13.30 | 13.60 | 14.89 |
+| 33,554,432 | 44.41 ms | 39.78 | 26.92 | 22.17 | 20.40 | 19.94 |
+
+The gain flattens at 4; 8 and 16 stay inside the run-to-run spread. Cap = **4**.
+`mnc_unpack_f64` shows the same shape (10.5 M: 15.7 ms at 4, 14.7 at 8, 15.0 at
+16). The host is a large part of this: a single core measures ~8 GB/s effective
+(`numpy` add over 20 M Float64, 41.6 ms), and load was 17-27, so the serial
+kernel is memory-bound already and extra workers mostly contend. Scaling is
+real but sublinear — 64 M `quantize`: 88.8 ms serial vs 45.96 ms at 4 workers.
+
+### End-to-end, including a result that does not replicate
+
+`pixi run bench` runs 5 M, which is below the threshold, so the phase does not
+appear in it; interleaved 5 M scaled-read numbers moved 15-23 ms between runs
+for both builds. A 20 M interleaved run did separate them and showed the old
+16-worker build ahead end to end (read 44.5 vs 54.5 ms, 7 rounds each). The
+kernel call is 42 ms of both builds' ~58 ms 20 M scaled write, and the kernel
+A/B at 20 M is 2.1x for this phase, so the gap is not kernel time; in the same
+harness the plain read, which calls no kernel at all, moved by the same amount.
+I could not reproduce the end-to-end gap in a way that survives a re-run, so it
+is recorded here rather than acted on. Anyone re-running this should use
+`bench/ab_parallel.py` for the kernel question and treat
+`pixi run bench` at 5 M as blind to this phase.
+
+### Reproduce
+
+Serial reference build (writes to /tmp, does not touch `dist/`):
+
+```bash
+pixi run python -c 's=open("src/netcdf4.mojo").read(); open("/tmp/serial_only.mojo","w").write(s.replace("comptime PARALLEL_THRESHOLD = 10485760","comptime PARALLEL_THRESHOLD = 9223372036854775807"))'
+MNC_SRC=/tmp/serial_only.mojo MNC_OUT=/tmp/lib_serial_only.so bash build/build.sh
+pixi run build   # restore dist/libmojo-netcdf4.so
+```
+
+Then, under a lock of your own (the shared `/tmp/mojo-bench.lock` is held by
+other jobs on this host for many minutes at a time):
+
+```bash
+flock /tmp/mojo-bench-par.lock pixi run python bench/ab_parallel.py \
+    /tmp/lib_serial_only.so dist/libmojo-netcdf4.so \
+    1048576,4194304,8388608,10485759,10485760,20971520 13
+flock /tmp/mojo-bench-par.lock pixi run python bench/launch_cost.py \
+    /tmp/lib_g262144.so 262144 1,2,3,4,8,16
+```
+
+`/tmp/lib_g262144.so` is the grain-variant library from the launch-cost table:
+the same source `sed`-substituted on `comptime GRAIN_SIZE` and built with
+`mojo build --emit shared-lib`. The worker-cap variants in the cap table are
+the same on `comptime MAX_WORKERS`.
+
